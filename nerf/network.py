@@ -215,7 +215,7 @@ class NeRFMultiRes(object):
     """
     def __init__(self, reso_num, model_kwargs) -> None:
         self.reso_num = reso_num
-        self.models = []
+        self.models: list[NeRFNetwork] = []
         # Initialize NeRF models for each dimension
         for i in range(reso_num):
             model = NeRFNetwork(num_levels=4, base_resolution=16**(i+1), **model_kwargs)
@@ -240,3 +240,23 @@ class NeRFMultiRes(object):
         colors = torch.sum(torch.stack(colors, dim=0), dim=0)
 
         return sigmas, colors
+
+    # optimizer utils
+    def get_params(self, lr):
+
+        params = []
+
+        for i in range(self.reso_num):
+            param = [
+                {'params': self.models[i].encoder.parameters(), 'lr': lr},
+                {'params': self.models[i].sigma_net.parameters(), 'lr': lr},
+                {'params': self.models[i].encoder_dir.parameters(), 'lr': lr},
+                {'params': self.models[i].color_net.parameters(), 'lr': lr},
+            ]
+            params += param
+        
+            if self.bg_radius > 0:
+                params.append({'params': self.models[i].encoder_bg.parameters(), 'lr': lr})
+                params.append({'params': self.models[i].bg_net.parameters(), 'lr': lr})
+        
+        return params
