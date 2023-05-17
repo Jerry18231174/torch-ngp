@@ -12,6 +12,7 @@ class NeRFNetwork(NeRFRenderer):
     def __init__(self,
                  num_levels=4,
                  base_resolution=16,
+                 max_resolution=4096,
                  encoding="hashgrid",
                  encoding_dir="sphere_harmonics",
                  encoding_bg="hashgrid",
@@ -31,7 +32,7 @@ class NeRFNetwork(NeRFRenderer):
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim
-        self.encoder, self.in_dim = get_encoder(encoding, num_levels=num_levels, base_resolution=base_resolution, desired_resolution=2048 * bound)
+        self.encoder, self.in_dim = get_encoder(encoding, num_levels=num_levels, base_resolution=base_resolution, desired_resolution=max_resolution)
 
         sigma_net = []
         for l in range(num_layers):
@@ -219,7 +220,7 @@ class NeRFMultiRes(nn.Module):
         self.bg_radius = model_kwargs['bg_radius']
         self.cuda_ray = model_kwargs['cuda_ray']
         # Initialize NeRF models for each dimension
-        models = [NeRFNetwork(num_levels=4, base_resolution=16**(i+1), **model_kwargs) for i in range(reso_num)]
+        models = [NeRFNetwork(num_levels=4, base_resolution=16*2**(2*i), max_resolution=16*2**(2*i+2), **model_kwargs) for i in range(reso_num)]
         self.models: list[NeRFNetwork] = nn.ModuleList(models)
 
     def forward(self, x, d):
