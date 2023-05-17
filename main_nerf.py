@@ -85,20 +85,22 @@ if __name__ == '__main__':
         from nerf.network_tcnn import NeRFNetwork
     else:
         from nerf.network import NeRFNetwork
+        from nerf.network import NeRFMultiRes
 
     print(opt)
     
     seed_everything(opt.seed)
 
-    model = NeRFNetwork(
-        encoding="hashgrid",
-        bound=opt.bound,
-        cuda_ray=opt.cuda_ray,
-        density_scale=1,
-        min_near=opt.min_near,
-        density_thresh=opt.density_thresh,
-        bg_radius=opt.bg_radius,
-    )
+    model_kwargs = {
+        "encoding": "hashgrid",
+        "bound": opt.bound,
+        "cuda_ray": opt.cuda_ray,
+        "density_scale": 1,
+        "min_near": opt.min_near,
+        "density_thresh": opt.density_thresh,
+        "bg_radius": opt.bg_radius,
+    }
+    model = NeRFMultiRes(reso_num=4, model_kwargs=model_kwargs)
     
     print(model)
 

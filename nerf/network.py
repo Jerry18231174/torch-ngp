@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,6 +10,8 @@ from .renderer import NeRFRenderer
 
 class NeRFNetwork(NeRFRenderer):
     def __init__(self,
+                 num_levels=4,
+                 base_resolution=16,
                  encoding="hashgrid",
                  encoding_dir="sphere_harmonics",
                  encoding_bg="hashgrid",
@@ -28,7 +31,7 @@ class NeRFNetwork(NeRFRenderer):
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
+        self.encoder, self.in_dim = get_encoder(encoding, num_levels=num_levels, base_resolution=base_resolution, desired_resolution=2048 * bound)
 
         sigma_net = []
         for l in range(num_layers):
@@ -204,3 +207,36 @@ class NeRFNetwork(NeRFRenderer):
             params.append({'params': self.bg_net.parameters(), 'lr': lr})
         
         return params
+
+
+class NeRFMultiRes(object):
+    """
+    Multi-resolution Radiance Fields
+    """
+    def __init__(self, reso_num, model_kwargs) -> None:
+        self.reso_num = reso_num
+        self.models = []
+        # Initialize NeRF models for each dimension
+        for i in range(reso_num):
+            model = NeRFNetwork(num_levels=4, base_resolution=16**(i+1), **model_kwargs)
+            self.models.append(model)
+
+    def __call__(self, x, d):
+        """
+        Imitate NeRFNetwork's forward() inference
+        @ param x: [N, 3], in [-bound, bound]
+        @ param d: [N, 3], nomalized in [-1, 1]
+        @ return sigma: 
+        @ return color:
+        """
+        sigmas = []
+        colors = []
+        for i in range(self.reso_num):
+            sigma, color = self.models[i](x, d)
+            sigmas.append(sigma)
+            colors.append(color)
+
+        sigmas = torch.sum(torch.stack(sigmas, dim=0), dim=0)
+        colors = torch.sum(torch.stack(colors, dim=0), dim=0)
+
+        return sigmas, colors
