@@ -209,21 +209,21 @@ class NeRFNetwork(NeRFRenderer):
         return params
 
 
-class NeRFMultiRes(object):
+class NeRFMultiRes(nn.Module):
     """
     Multi-resolution Radiance Fields
     """
     def __init__(self, reso_num, model_kwargs) -> None:
+        super().__init__()
         self.reso_num = reso_num
-        self.models: list[NeRFNetwork] = []
+        self.bg_radius = model_kwargs['bg_radius']
+        self.cuda_ray = model_kwargs['cuda_ray']
         # Initialize NeRF models for each dimension
-        for i in range(reso_num):
-            model = NeRFNetwork(num_levels=4, base_resolution=16**(i+1), **model_kwargs)
-            self.models.append(model)
+        models = [NeRFNetwork(num_levels=4, base_resolution=16**(i+1), **model_kwargs) for i in range(reso_num)]
+        self.models: list[NeRFNetwork] = nn.ModuleList(models)
 
-    def __call__(self, x, d):
+    def forward(self, x, d):
         """
-        Imitate NeRFNetwork's forward() inference
         @ param x: [N, 3], in [-bound, bound]
         @ param d: [N, 3], nomalized in [-1, 1]
         @ return sigma: 
@@ -240,6 +240,24 @@ class NeRFMultiRes(object):
         colors = torch.sum(torch.stack(colors, dim=0), dim=0)
 
         return sigmas, colors
+    
+    def density(self, x):
+        # x: [N, 3], in [-bound, bound]
+
+        sigmas = []
+        geo_feats = []
+        for i in range(self.reso_num):
+            sigma, geo_feat = self.models[i].density(x)
+            sigmas.append(sigma)
+            geo_feats.append(geo_feat)
+
+        sigmas = torch.sum(torch.stack(sigmas, dim=0), dim=0)
+        geo_feats = torch.sum(torch.stack(geo_feats, dim=0), dim=0)
+
+        return {
+            'sigma': sigmas,
+            'geo_feat': geo_feats,
+        }
 
     # optimizer utils
     def get_params(self, lr):
@@ -260,3 +278,62 @@ class NeRFMultiRes(object):
                 params.append({'params': self.models[i].bg_net.parameters(), 'lr': lr})
         
         return params
+    
+    # NeRFRenderer methods
+    def render(self, rays_o, rays_d, staged=False, max_ray_batch=4096, reso='all', **kwargs):
+        # rays_o, rays_d: [B, N, 3], assumes B == 1
+        # return: pred_rgb: [B, N, 3]
+        if reso == 'all':
+            # Render at combined resolution
+            results = {"depth": [], "image": []}
+            for i in range(self.reso_num):
+                result = self.models[i].render(rays_o, rays_d, staged=staged, max_ray_batch=max_ray_batch, **kwargs)
+                results['depth'].append(result['depth'])
+                results['image'].append(result['image'])
+
+            results['depth'] = torch.sum(torch.stack(results['depth'], dim=0), dim=0)
+            results['image'] = torch.sum(torch.stack(results['image'], dim=0), dim=0)
+        
+        elif isinstance(reso, int) and reso >= 0 and reso < self.reso_num:
+            # Render at certain resolution
+            results = self.models[reso].render(rays_o, rays_d, staged=staged, max_ray_batch=max_ray_batch, **kwargs)
+
+        else:
+            raise RuntimeError("Illegal resolution in rendering:", reso)
+
+        return results
+    
+    @torch.no_grad()
+    def mark_untrained_grid(self, poses, intrinsic, S=64):
+        # poses: [B, 4, 4]
+        # intrinsic: [3, 3]
+        for i in range(self.reso_num):
+            self.models[i].mark_untrained_grid(poses=poses, intrinsic=intrinsic, S=S)
+
+    @torch.no_grad()
+    def update_extra_state(self, decay=0.95, S=128):
+        # call before each epoch to update extra states.
+        for i in range(self.reso_num):
+            self.models[i].update_extra_state(decay=decay, S=S)
+    
+    def mean_count_get(self) -> int:
+        mean_count = 0
+        for i in range(self.reso_num):
+            mean_count += self.models[i].mean_count
+        
+        return mean_count // self.reso_num
+    
+    def mean_count_set(self, mean_count) -> None:
+        for i in range(self.reso_num):
+            self.models[i].mean_count = mean_count
+    
+    def mean_density_get(self) -> torch.Tensor:
+        mean_densities = []
+        for i in range(self.reso_num):
+            mean_densities.append(self.models[i].mean_density)
+        
+        return torch.sum(torch.stack(mean_densities, dim=0), dim=0)
+    
+    def mean_density_set(self, mean_density) -> None:
+        for i in range(self.reso_num):
+            self.models[i].mean_count = mean_density

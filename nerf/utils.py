@@ -426,7 +426,7 @@ class Trainer(object):
 
     ### ------------------------------	
 
-    def train_step(self, data):
+    def train_step(self, data, reso_level):
 
         rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
@@ -438,7 +438,16 @@ class Trainer(object):
             H, W = data['H'], data['W']
 
             # currently fix white bg, MUST force all rays!
-            outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=None, perturb=True, force_all_rays=True, **vars(self.opt))
+            # Update ONLY currently finest delta NGP
+            outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=None, perturb=True, force_all_rays=True, reso=reso_level, **vars(self.opt))
+            # Stop gradient for coarser levels
+            for coarser_level in range(reso_level):
+                coarser_outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=None, perturb=True, force_all_rays=True, reso=coarser_level, **vars(self.opt))
+                coarser_outputs['depth'] = coarser_outputs['depth'].detach()
+                coarser_outputs['image'] = coarser_outputs['image'].detach()
+                outputs['depth'] = outputs['depth'] + coarser_outputs['depth']
+                outputs['image'] = outputs['image'] + coarser_outputs['image']
+            
             pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous()
 
             # [debug] uncomment to plot the images used in train_step
@@ -810,44 +819,44 @@ class Trainer(object):
         self.local_step = 0
 
         for data in loader:
-            
-            # update grid every 16 steps
-            if self.model.cuda_ray and self.global_step % self.opt.update_extra_interval == 0:
-                with torch.cuda.amp.autocast(enabled=self.fp16):
-                    self.model.update_extra_state()
-                    
-            self.local_step += 1
-            self.global_step += 1
-
-            self.optimizer.zero_grad()
-
-            with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss = self.train_step(data)
-         
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-
-            if self.scheduler_update_every_step:
-                self.lr_scheduler.step()
-
-            loss_val = loss.item()
-            total_loss += loss_val
-
-            if self.local_rank == 0:
-                if self.report_metric_at_train:
-                    for metric in self.metrics:
-                        metric.update(preds, truths)
+            for reso_level in range(self.model.reso_num):
+                # update grid every 16 steps
+                if self.model.cuda_ray and self.global_step % self.opt.update_extra_interval == 0:
+                    with torch.cuda.amp.autocast(enabled=self.fp16):
+                        self.model.update_extra_state()
                         
-                if self.use_tensorboardX:
-                    self.writer.add_scalar("train/loss", loss_val, self.global_step)
-                    self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
+                self.local_step += 1
+                self.global_step += 1
+
+                self.optimizer.zero_grad()
+
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    preds, truths, loss = self.train_step(data, reso_level)
+            
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
                 if self.scheduler_update_every_step:
-                    pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")
-                else:
-                    pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f})")
-                pbar.update(loader.batch_size)
+                    self.lr_scheduler.step()
+
+                loss_val = loss.item()
+                total_loss += loss_val
+
+                if self.local_rank == 0:
+                    if self.report_metric_at_train:
+                        for metric in self.metrics:
+                            metric.update(preds, truths)
+                            
+                    if self.use_tensorboardX:
+                        self.writer.add_scalar("train/loss", loss_val, self.global_step)
+                        self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
+
+                    if self.scheduler_update_every_step:
+                        pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f}), lr={self.optimizer.param_groups[0]['lr']:.6f}")
+                    else:
+                        pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f})")
+                    pbar.update(loader.batch_size)
 
         if self.ema is not None:
             self.ema.update()
@@ -985,8 +994,8 @@ class Trainer(object):
         }
 
         if self.model.cuda_ray:
-            state['mean_count'] = self.model.mean_count
-            state['mean_density'] = self.model.mean_density
+            state['mean_count'] = self.model.mean_count_get()
+            state['mean_density'] = self.model.mean_density_get()
 
         if full:
             state['optimizer'] = self.optimizer.state_dict()
@@ -1064,9 +1073,9 @@ class Trainer(object):
 
         if self.model.cuda_ray:
             if 'mean_count' in checkpoint_dict:
-                self.model.mean_count = checkpoint_dict['mean_count']
+                self.model.mean_count_set(checkpoint_dict['mean_count'])
             if 'mean_density' in checkpoint_dict:
-                self.model.mean_density = checkpoint_dict['mean_density']
+                self.model.mean_density_set(checkpoint_dict['mean_density'])
         
         if model_only:
             return
