@@ -1,4 +1,3 @@
-from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -220,7 +219,7 @@ class NeRFMultiRes(nn.Module):
         self.bg_radius = model_kwargs['bg_radius']
         self.cuda_ray = model_kwargs['cuda_ray']
         # Initialize NeRF models for each dimension
-        models = [NeRFNetwork(num_levels=4, base_resolution=16*2**(2*i), max_resolution=16*2**(2*i+2), **model_kwargs) for i in range(reso_num)]
+        models = [NeRFNetwork(num_levels=3, base_resolution=16*2**(2*i), max_resolution=16*2**(2*i+2), **model_kwargs) for i in range(reso_num)]
         self.models: list[NeRFNetwork] = nn.ModuleList(models)
 
     def forward(self, x, d):
