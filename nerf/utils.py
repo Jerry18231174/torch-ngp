@@ -477,7 +477,16 @@ class Trainer(object):
         else:
             gt_rgb = images
 
-        outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=bg_color, perturb=True, force_all_rays=False if self.opt.patch_size == 1 else True, **vars(self.opt))
+        # Update ONLY currently finest delta NGP
+        outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=None, perturb=True, force_all_rays=False if self.opt.patch_size == 1 else True, reso=reso_level, **vars(self.opt))
+        # Stop gradient for coarser levels
+        for coarser_level in range(reso_level):
+            coarser_outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=None, perturb=True, force_all_rays=True, reso=coarser_level, **vars(self.opt))
+            coarser_outputs['depth'] = coarser_outputs['depth'].detach()
+            coarser_outputs['image'] = coarser_outputs['image'].detach()
+            outputs['depth'] = outputs['depth'] + coarser_outputs['depth']
+            outputs['image'] = outputs['image'] + coarser_outputs['image']
+        # outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=bg_color, perturb=True, force_all_rays=False if self.opt.patch_size == 1 else True, **vars(self.opt))
         # outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=bg_color, perturb=True, force_all_rays=True, **vars(self.opt))
     
         pred_rgb = outputs['image']
