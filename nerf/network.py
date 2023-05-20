@@ -219,7 +219,7 @@ class NeRFMultiRes(nn.Module):
         self.bg_radius = model_kwargs['bg_radius']
         self.cuda_ray = model_kwargs['cuda_ray']
         # Initialize NeRF models for each dimension
-        models = [NeRFNetwork(num_levels=3, base_resolution=16*2**(2*i), max_resolution=16*2**(2*i+2), **model_kwargs) for i in range(reso_num)]
+        models = [NeRFNetwork(num_levels=4, base_resolution=16*2**(2*i), max_resolution=16*2**(2*i+2), **model_kwargs) for i in range(reso_num)]
         self.models: list[NeRFNetwork] = nn.ModuleList(models)
 
     def forward(self, x, d):
@@ -229,17 +229,19 @@ class NeRFMultiRes(nn.Module):
         @ return sigma: 
         @ return color:
         """
-        sigmas = []
-        colors = []
-        for i in range(self.reso_num):
-            sigma, color = self.models[i](x, d)
-            sigmas.append(sigma)
-            colors.append(color)
+        # sigmas = []
+        # colors = []
+        # for i in range(self.reso_num):
+        #     sigma, color = self.models[i](x, d)
+        #     sigmas.append(sigma)
+        #     colors.append(color)
 
-        sigmas = torch.sum(torch.stack(sigmas, dim=0), dim=0)
-        colors = torch.sum(torch.stack(colors, dim=0), dim=0)
+        # sigmas = torch.sum(torch.stack(sigmas, dim=0), dim=0)
+        # colors = torch.sum(torch.stack(colors, dim=0), dim=0)
 
-        return sigmas, colors
+        # return sigmas, colors
+
+        raise NotImplementedError()
     
     def density(self, x):
         # x: [N, 3], in [-bound, bound]
